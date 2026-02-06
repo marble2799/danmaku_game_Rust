@@ -1,16 +1,26 @@
 use bevy::prelude::*;
+use bevy::render::settings::{Backends, RenderCreation, WgpuSettings};
+use bevy::render::RenderPlugin;
 
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
                 title: "Danmaku Shooting".into(),
-                resolution: (600, 800).into(), // 縦長シューティング
+                resolution: (500, 800).into(), // 縦長シューティング
                 fit_canvas_to_parent: true,
                 ..default()
             }),
             ..default()
-        }))
+        })
+//        .set(RenderPlugin {
+//            render_creation: RenderCreation::Automatic(WgpuSettings {
+//                backends: Some(Backends::GL),
+//                ..default()
+//            }),
+//            ..default()
+//        })
+        )
         .add_systems(Startup, setup)
         .run();
 }
@@ -26,7 +36,7 @@ fn setup(mut commands: Commands) {
             custom_size: Some(Vec2::new(30., 30.)),
             ..default()
         },
-        Transform::from_xyz(0., -300., 0.),
+        Transform::from_xyz(0.,-300., 0.),
     ));
 
 }
