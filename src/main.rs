@@ -1,21 +1,31 @@
-use bevy::prelude::*;
+use bevy::{ecs::query::QueryManyUniqueIter, prelude::*, ui::update};
+use rand::prelude::*;
 
 #[derive(Component)]
 struct Player;
+#[derive(Component)]
+struct Enemy;
 #[derive(Component)]
 struct Bullet;
 #[derive(Component)]
 struct Velocity(Vec3);
 #[derive(Component)]
+struct Acceleration(Vec3);
+#[derive(Component)]
 struct ShootCooldown(Timer); // 連射速度を制限するタイマー
+
+#[derive(Resource)]
+struct EnemySpawnConfig(Timer);
 
 // 名前付き定数
 const WINDOW_WIDTH:f32 = 500.;
 const WINDOW_HEIGHT:f32 = 800.;
+const ENEMY_SPAWN_DURATION:f32 = 2.;
 
 fn main() {
     App::new()
         .insert_resource(ClearColor(Color::srgb(0.05, 0.05, 0.2)))
+        .insert_resource(EnemySpawnConfig(Timer::from_seconds(ENEMY_SPAWN_DURATION, TimerMode::Repeating)))
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
                 title: "Danmaku Shooting".into(),
@@ -30,8 +40,10 @@ fn main() {
         .add_systems(Update, (
             move_player,
             shoot_bullet,
+            update_velocity,
             move_velocity,
             despawn_objects,
+            spawn_enemies,
         ))
         .run();
 }
@@ -125,6 +137,15 @@ fn shoot_bullet(
     }
 }
 
+fn update_velocity(
+    mut query: Query<(&mut Velocity, &Acceleration)>,
+    time: Res<Time>,
+) {
+    for (mut velocity, acceleration) in query.iter_mut() {
+        velocity.0 += acceleration.0 * time.delta_secs();
+    }
+}
+
 fn move_velocity(
     mut query: Query<(&mut Transform, &Velocity)>,
     time: Res<Time>,
@@ -137,7 +158,7 @@ fn move_velocity(
 
 fn despawn_objects(
     mut commands: Commands,
-    query: Query<(Entity, &Transform), With<Bullet>>,
+    query: Query<(Entity, &Transform), Or<(With<Bullet>, With<Enemy>)>>,
 ) {
     let under = WINDOW_HEIGHT * -1. / 2.;
     let upper = WINDOW_HEIGHT / 2.;
@@ -148,5 +169,39 @@ fn despawn_objects(
         if transform.translation.x < left || right < transform.translation.x  || transform.translation.y < under || upper < transform.translation.y {
             commands.entity(entity_id).despawn();
         }
+    }
+}
+
+fn spawn_enemies(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut spawn_config: ResMut<EnemySpawnConfig>,
+) {
+    // 時間を進める
+    spawn_config.0.tick(time.delta());
+
+    if spawn_config.0.is_finished() {
+        let mut rng = rand::rng();
+        let x = rng.random_range(-200.0..200.0);
+        let x_v = if x == 0. {
+            0.
+        }else if x > 0. {
+            rng.random_range(-60.0..-10.)
+        }else {
+            rng.random_range(-10.0..60.)
+        };
+        let y = 400.;
+        commands.spawn((
+            Sprite {
+                color: Color::srgb(0.3, 0.3, 0.5),
+                custom_size: Some(Vec2::new(30., 40.)),
+                ..default()
+            },
+            Transform::from_xyz(x,y,0.),
+            Enemy,
+            Acceleration(Vec3::new(0.0, 125.0, 0.0)),
+            Velocity(Vec3::new(x_v, -200.0, 0.0)),
+            ShootCooldown(Timer::from_seconds(0.1, TimerMode::Repeating)),
+        ));
     }
 }

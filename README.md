@@ -7,3 +7,4 @@ Verify that it works corrently with `cargo run`. However, `trunk serve` does not
 
 ### 2026/02/07
 - Impliment moving function
+- Impliment shooting function. Push `space` key !!
