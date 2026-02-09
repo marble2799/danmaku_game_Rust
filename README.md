@@ -16,6 +16,8 @@ Verify that it works corrently with `cargo run`. However, `trunk serve` does not
   - TeamSide
   - Status
   - Score(need showing function!!)
-- Impliment collision about bullet and {Enemy, Player}
-    - need implying collision between Enemy and Player.
+- Impliment all collision
+  - bullet and {Player, Enemy}
+  - Player and Enemy
 - refact some struct(add impl)
+- make Simple GameOver
