@@ -1,5 +1,6 @@
 use bevy::{ecs::query::QueryManyUniqueIter, prelude::*, ui::update};
 use rand::prelude::*;
+use std::{collections::HashMap, hash::Hash};
 
 #[derive(Component)]
 struct Player;
@@ -9,13 +10,75 @@ struct Enemy;
 struct Bullet;
 #[derive(Component)]
 struct Velocity(Vec3);
+#[derive(Component, PartialEq)]
+enum TeamSide {
+    PLAYER,
+    ENEMY,
+}
 #[derive(Component)]
 struct Acceleration(Vec3);
 #[derive(Component)]
 struct ShootCooldown(Timer); // 連射速度を制限するタイマー
+#[derive(Component)]
+enum Collider{
+    CIRCLE(Circle),
+    SQUARE(Vec2),
+}
+impl Collider {
+    fn get_size(&self) -> (f32, f32) {
+        match self {
+            Self::CIRCLE(c)=> (c.radius, 0.0),
+            Self::SQUARE(val) => (val[0]/2., val[1]/2.),
+        }
+    }
+}
+#[derive(Component)]
+struct Status {
+    hp:i32,
+    attack:i32,
+}
+impl Status {
+    fn new(hp:i32, attack:i32) -> Self {
+        Status { hp, attack }
+    }
+
+    fn reduce_hp(&mut self, attack:i32) {
+        self.hp -= attack;
+    }
+
+    fn get_attack(&self) -> i32 {
+        self.attack
+    }
+
+    fn is_die(&self) -> bool {
+        self.hp <= 0
+    }
+}
 
 #[derive(Resource)]
-struct EnemySpawnConfig(Timer);
+struct EnemySpawnConfig {
+    cooldown:Timer,
+    hp: i32,
+    attack: i32,
+}
+
+impl EnemySpawnConfig {
+    fn new(cooldown:Timer, hp:i32, attack:i32) -> Self {
+        EnemySpawnConfig { cooldown, hp, attack }
+    }
+}
+#[derive(Resource)]
+struct Score{score:i64}
+impl Score {
+    fn get_score(&self) -> i64 {
+        self.score
+    }
+
+    fn add_score(&mut self, add_val:i64) -> i64 {
+        self.score += add_val;
+        self.score
+    }
+}
 
 // 名前付き定数
 const WINDOW_WIDTH:f32 = 500.;
@@ -25,7 +88,8 @@ const ENEMY_SPAWN_DURATION:f32 = 2.;
 fn main() {
     App::new()
         .insert_resource(ClearColor(Color::srgb(0.05, 0.05, 0.2)))
-        .insert_resource(EnemySpawnConfig(Timer::from_seconds(ENEMY_SPAWN_DURATION, TimerMode::Repeating)))
+        .insert_resource(EnemySpawnConfig::new(Timer::from_seconds(ENEMY_SPAWN_DURATION, TimerMode::Repeating), 10, 1))
+        .insert_resource(Score{score:0})
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
                 title: "Danmaku Shooting".into(),
@@ -44,6 +108,7 @@ fn main() {
             move_velocity,
             despawn_objects,
             spawn_enemies,
+            check_collisions,
         ))
         .run();
 }
@@ -60,7 +125,10 @@ fn setup(mut commands: Commands) {
             ..default()
         },
         Transform::from_xyz(0.,-300., 0.),
+        Collider::CIRCLE(Circle::new(5.0)),
         Player,
+        Status::new(1, 0), // 弾幕シューティングなので即死, 本体は何かにあたったら即死なのでattackは0
+        TeamSide::PLAYER,
         ShootCooldown(Timer::from_seconds(0.1, TimerMode::Repeating)),
     ));
 }
@@ -130,6 +198,9 @@ fn shoot_bullet(
                 },
                 // 自機の少し上から出す(自機の座標は"真ん中"であることに注意！)
                 Transform::from_translation(transform.translation + Vec3::new(0.0, 20.0, 0.0)),
+                Collider::SQUARE(Vec2::new(10., 20.)),
+                TeamSide::PLAYER,
+                Status::new(1, 1),
                 Bullet,
                 Velocity(Vec3::new(0.0, 800.0, 0.0)),
             ));
@@ -178,9 +249,9 @@ fn spawn_enemies(
     mut spawn_config: ResMut<EnemySpawnConfig>,
 ) {
     // 時間を進める
-    spawn_config.0.tick(time.delta());
+    spawn_config.cooldown.tick(time.delta());
 
-    if spawn_config.0.is_finished() {
+    if spawn_config.cooldown.is_finished() {
         let mut rng = rand::rng();
         let x = rng.random_range(-200.0..200.0);
         let x_v = if x == 0. {
@@ -194,14 +265,63 @@ fn spawn_enemies(
         commands.spawn((
             Sprite {
                 color: Color::srgb(0.3, 0.3, 0.5),
-                custom_size: Some(Vec2::new(30., 40.)),
+                custom_size: Some(Vec2::new(30., 30.)),
                 ..default()
             },
             Transform::from_xyz(x,y,0.),
             Enemy,
             Acceleration(Vec3::new(0.0, 125.0, 0.0)),
+            Collider::SQUARE(Vec2::new(30., 30.)),
+            TeamSide::ENEMY,
+            Status::new(spawn_config.hp, spawn_config.attack), // 将来的に複数の敵を作成したいので、spawn_configを参照する
             Velocity(Vec3::new(x_v, -200.0, 0.0)),
             ShootCooldown(Timer::from_seconds(0.1, TimerMode::Repeating)),
         ));
     }
+}
+
+fn check_aabb_collision(
+    first_transform: &Vec3,
+    first_collider: &Collider,
+    second_transform: &Vec3,
+    second_collider: &Collider,
+) -> bool {
+    let distance = first_transform - second_transform;
+    let size_first = first_collider.get_size();
+    let size_second = second_collider.get_size();
+
+    distance.x.abs() < (size_first.0 + size_second.0) && distance.y.abs() < (size_first.1 + size_second.1)
+}
+
+fn check_collisions(
+    mut commands: Commands,
+    bullet_query: Query<(Entity, &Transform, &mut Status, &Collider, &TeamSide), With<Bullet>>,
+    mut target_query: Query<(Entity, &Transform, &mut Status, &Collider, &TeamSide), Without<Bullet>>,
+    mut score: ResMut<Score>,
+) {
+    // 自機の弾と敵が接触している確認
+    for (bullet_entity, bullet_transform, bullet_status, bullet_collider, bullet_teamside) in &bullet_query {
+        for (target_entity, target_transform, mut target_status, target_collider, target_teamside) in target_query.iter_mut() {
+            if bullet_teamside == target_teamside {
+                continue;
+            }
+            // aabb方式の衝突判定を行う
+            if check_aabb_collision(&bullet_transform.translation, bullet_collider, &target_transform.translation, target_collider) {
+                // 敵のHPを減らす(todo)
+                target_status.reduce_hp(bullet_status.get_attack());
+
+                commands.entity(bullet_entity).despawn();
+
+                // もし敵のHPがゼロなら、スコアを上げて敵を消す
+                if target_status.is_die() {
+                    commands.entity(target_entity).despawn();
+                    score.add_score(1);
+                }
+
+                // 弾を減らしたあとは内側のループから抜けて無駄な探索を避ける
+                break;
+            }
+        }
+    }
+
 }
