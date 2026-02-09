@@ -8,3 +8,16 @@ Verify that it works corrently with `cargo run`. However, `trunk serve` does not
 ### 2026/02/07
 - Impliment moving function
 - Impliment shooting function. Push `space` key !!
+- Impliment enemy spawn and moving with Acceleration.
+- add Collider in player, bullet and enemy.(ONLY ADD!!)
+
+### 2026/02/09
+- Impliment Some struct
+  - TeamSide
+  - Status
+  - Score(need showing function!!)
+- Impliment all collision
+  - bullet and {Player, Enemy}
+  - Player and Enemy
+- refact some struct(add impl)
+- make Simple GameOver
