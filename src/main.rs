@@ -1,6 +1,6 @@
 use bevy::{ecs::query::QueryManyUniqueIter, prelude::*, ui::update};
 use rand::prelude::*;
-use std::{collections::HashMap, hash::Hash};
+use std::collections::HashMap;
 
 #[derive(Component)]
 struct Player;
@@ -36,14 +36,17 @@ impl Collider {
 struct Status {
     hp:i32,
     attack:i32,
+    is_invincible: bool,
 }
 impl Status {
     fn new(hp:i32, attack:i32) -> Self {
-        Status { hp, attack }
+        Status { hp, attack, is_invincible:false }
     }
 
     fn reduce_hp(&mut self, attack:i32) {
-        self.hp -= attack;
+        if !self.is_invincible {
+            self.hp -= attack;
+        }
     }
 
     fn get_attack(&self) -> i32 {
@@ -61,7 +64,6 @@ struct EnemySpawnConfig {
     hp: i32,
     attack: i32,
 }
-
 impl EnemySpawnConfig {
     fn new(cooldown:Timer, hp:i32, attack:i32) -> Self {
         EnemySpawnConfig { cooldown, hp, attack }
@@ -78,6 +80,13 @@ impl Score {
         self.score += add_val;
         self.score
     }
+}
+
+#[derive(States, Debug, Clone, Copy, Eq, PartialEq, Hash, Default)]
+enum GameState {
+    #[default]
+    Playing,
+    GameOver,
 }
 
 // 名前付き定数
@@ -100,6 +109,7 @@ fn main() {
             ..default()
         })
         )
+        .init_state::<GameState>()
         .add_systems(Startup, setup)
         .add_systems(Update, (
             move_player,
@@ -108,8 +118,9 @@ fn main() {
             move_velocity,
             despawn_objects,
             spawn_enemies,
-            check_collisions,
-        ))
+            check_collisions_with_bullet,
+            check_collisions_between_target,
+        ).run_if(in_state(GameState::Playing)))
         .run();
 }
 
@@ -293,13 +304,14 @@ fn check_aabb_collision(
     distance.x.abs() < (size_first.0 + size_second.0) && distance.y.abs() < (size_first.1 + size_second.1)
 }
 
-fn check_collisions(
+fn check_collisions_with_bullet(
     mut commands: Commands,
     bullet_query: Query<(Entity, &Transform, &mut Status, &Collider, &TeamSide), With<Bullet>>,
     mut target_query: Query<(Entity, &Transform, &mut Status, &Collider, &TeamSide), Without<Bullet>>,
+    mut next_state: ResMut<NextState<GameState>>,
     mut score: ResMut<Score>,
 ) {
-    // 自機の弾と敵が接触している確認
+    // 弾と{敵, player}が接触しているか確認
     for (bullet_entity, bullet_transform, bullet_status, bullet_collider, bullet_teamside) in &bullet_query {
         for (target_entity, target_transform, mut target_status, target_collider, target_teamside) in target_query.iter_mut() {
             if bullet_teamside == target_teamside {
@@ -314,8 +326,15 @@ fn check_collisions(
 
                 // もし敵のHPがゼロなら、スコアを上げて敵を消す
                 if target_status.is_die() {
-                    commands.entity(target_entity).despawn();
-                    score.add_score(1);
+                    if target_teamside == &TeamSide::ENEMY {
+                        commands.entity(target_entity).despawn();
+                        score.add_score(1);
+                    }else { // playerのHPがゼロならGameOver
+                        commands.entity(target_entity).despawn();
+                        println!("Game Over...");
+                        next_state.set(GameState::GameOver);
+                        return;
+                    }
                 }
 
                 // 弾を減らしたあとは内側のループから抜けて無駄な探索を避ける
@@ -323,5 +342,35 @@ fn check_collisions(
             }
         }
     }
+}
 
+fn check_collisions_between_target(
+    mut commands: Commands,
+    mut player_query: Query<(Entity, &Transform, &mut Status, &Collider),With<Player>>,
+    mut enemy_query: Query<(Entity, &Transform, &mut Status, &Collider, Option<&Bullet>), Without<Player>>,
+    mut next_state: ResMut<NextState<GameState>>,
+) {
+    if let Ok((player_entity, player_transform, mut player_status, player_collider)) = player_query.single_mut() {
+        for (enemy_entity, enemy_transform, mut enemy_status, enemy_collider, opt_bullet) in enemy_query.iter_mut() {
+            // bulletなら除外
+            if let Some(_) = opt_bullet {
+                continue;
+            }
+
+            if check_aabb_collision(&player_transform.translation, player_collider, &enemy_transform.translation, enemy_collider) {
+                // PlayerのHPを減らす
+                player_status.reduce_hp(enemy_status.get_attack());
+
+                commands.entity(enemy_entity).despawn();
+
+                // もしPlayerのHPがゼロならGame Over
+                if player_status.is_die() {
+                    commands.entity(player_entity).despawn();
+                    println!("Game Over...");
+                    next_state.set(GameState::GameOver);
+                    return;
+                }
+            }
+        }
+    }
 }
