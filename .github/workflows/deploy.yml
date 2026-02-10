@@ -35,7 +35,7 @@ jobs:
 
       # 公開URL用のパス設定（ここがミソ）
       - name: Build
-        run: trunk build --release --public-url "${GITHUB_REPOSITORY#*/}"
+        run: trunk build --release --public-url "/${GITHUB_REPOSITORY#*/}"
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
