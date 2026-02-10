@@ -21,3 +21,10 @@ Verify that it works corrently with `cargo run`. However, `trunk serve` does not
   - Player and Enemy
 - refact some struct(add impl)
 - make Simple GameOver
+
+### 2026/02/10
+- Impliment Enemy shooting
+- Impliment GameStart and GameOver State(Text Window)
+    - can restart
+- Impliment ScoreBoard
+## Fist version is completed !!

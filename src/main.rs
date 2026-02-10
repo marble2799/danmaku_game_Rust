@@ -1,13 +1,16 @@
-use bevy::{ecs::query::QueryManyUniqueIter, prelude::*, ui::update};
+use bevy::{prelude::*, color::palettes::css::RED};
 use rand::prelude::*;
-use std::collections::HashMap;
 
+#[derive(Component)]
+struct ScoreText;
 #[derive(Component)]
 struct Player;
 #[derive(Component)]
 struct Enemy;
 #[derive(Component)]
 struct Bullet;
+#[derive(Component)]
+struct InGameEntity;
 #[derive(Component)]
 struct Velocity(Vec3);
 #[derive(Component, PartialEq)]
@@ -27,7 +30,7 @@ enum Collider{
 impl Collider {
     fn get_size(&self) -> (f32, f32) {
         match self {
-            Self::CIRCLE(c)=> (c.radius, 0.0),
+            Self::CIRCLE(c)=> (c.radius, c.radius),
             Self::SQUARE(val) => (val[0]/2., val[1]/2.),
         }
     }
@@ -70,14 +73,26 @@ impl EnemySpawnConfig {
     }
 }
 #[derive(Resource)]
-struct Score{score:i64}
+struct Score{score:i64, is_changed:bool}
 impl Score {
+    fn init_score(&mut self) {
+        self.score = 0;
+        self.is_changed = true;
+    }
+
     fn get_score(&self) -> i64 {
         self.score
     }
 
+    fn get_is_changed(&mut self) -> bool {
+        let ans = self.is_changed;
+        self.is_changed = false;
+        ans
+    }
+
     fn add_score(&mut self, add_val:i64) -> i64 {
         self.score += add_val;
+        self.is_changed = true;
         self.score
     }
 }
@@ -85,11 +100,14 @@ impl Score {
 #[derive(States, Debug, Clone, Copy, Eq, PartialEq, Hash, Default)]
 enum GameState {
     #[default]
+    GameStart,
     Playing,
     GameOver,
 }
 
-// 名前付き定数
+// ゲーム画面全体(本来はこれとWINDOW_WIDTHの差分に残機などを書き込みたい)
+// const GAME_WIDTH:f32 = 800.;
+// Playerなどが移動できる領域
 const WINDOW_WIDTH:f32 = 500.;
 const WINDOW_HEIGHT:f32 = 800.;
 const ENEMY_SPAWN_DURATION:f32 = 2.;
@@ -98,7 +116,7 @@ fn main() {
     App::new()
         .insert_resource(ClearColor(Color::srgb(0.05, 0.05, 0.2)))
         .insert_resource(EnemySpawnConfig::new(Timer::from_seconds(ENEMY_SPAWN_DURATION, TimerMode::Repeating), 10, 1))
-        .insert_resource(Score{score:0})
+        .insert_resource(Score{score:0, is_changed:true})
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
                 title: "Danmaku Shooting".into(),
@@ -110,23 +128,66 @@ fn main() {
         })
         )
         .init_state::<GameState>()
-        .add_systems(Startup, setup)
+        .add_systems(Startup, start_setup)
+        .add_systems(Update, game_start.run_if(in_state(GameState::GameStart)))
+        .add_systems(OnEnter(GameState::Playing), setup)
         .add_systems(Update, (
             move_player,
             shoot_bullet,
+            enemy_shoot,
             update_velocity,
             move_velocity,
             despawn_objects,
             spawn_enemies,
             check_collisions_with_bullet,
             check_collisions_between_target,
+            update_score,
         ).run_if(in_state(GameState::Playing)))
+        .add_systems(OnEnter(GameState::GameOver), gameover_setup)
+        .add_systems(Update, restart_game.run_if(in_state(GameState::GameOver)))
         .run();
 }
 
-fn setup(mut commands: Commands) {
-    // カメラを設定
+fn start_setup(mut commands: Commands) {
     commands.spawn(Camera2d::default());
+    // タイトル画面の設定
+    commands.spawn((
+        Text::new("Press SpaceKey to start !!"),
+        TextFont {
+            font_size: 28.0,
+            ..default()
+        },
+        TextLayout::new_with_justify(Justify::Center),
+        Node {
+            position_type: PositionType::Absolute,
+            bottom: px(400),
+            right: px(30),
+            ..default()
+        }
+    ));
+
+    // (todo)操作の説明 | wasdで移動, spaceで射撃(長押しOK)
+    commands.spawn((
+        Text::new("WASD: movement\nSpaceKey: shoot(can hold)"),
+        TextLayout::new_with_justify(Justify::Center),
+        Node {
+            position_type: PositionType::Absolute,
+            bottom: px(300),
+            right: px(110),
+            ..default()
+        }
+    ));
+}
+
+fn setup(mut commands: Commands) {
+    // スコアボードの設定
+    commands.spawn((
+        Text::new("Score: "),
+    ))
+    .with_child((
+        TextSpan::default(),
+        ScoreText,
+    ));
 
     // 自機を設定
     commands.spawn((
@@ -141,7 +202,75 @@ fn setup(mut commands: Commands) {
         Status::new(1, 0), // 弾幕シューティングなので即死, 本体は何かにあたったら即死なのでattackは0
         TeamSide::PLAYER,
         ShootCooldown(Timer::from_seconds(0.1, TimerMode::Repeating)),
+        InGameEntity,
     ));
+}
+
+fn gameover_setup(
+    mut commands: Commands,
+    query: Query<Entity, With<Bullet>>,
+) {
+    for entity in &query {
+        commands.entity(entity).despawn();
+    }
+    commands.spawn((
+        Text::new("Game Over..."),
+        TextFont {
+            font_size: 50.,
+            ..default()
+        },
+        TextColor(RED.into()),
+        Node {
+            position_type: PositionType::Absolute,
+            bottom: px(400),
+            right: px(75),
+            ..default()
+        }
+    ));
+    commands.spawn((
+        Text::new("Pree R to restart"),
+        TextFont {
+            font_size: 30.,
+            ..default()
+        },
+        Node {
+            position_type: PositionType::Absolute,
+            bottom: px(350),
+            right: px(100),
+            ..default()
+        }
+    ));
+}
+
+fn restart_game(
+    keyboard_input: Res<ButtonInput<KeyCode>>,
+    mut commands: Commands,
+    query: Query<Entity, Or<(With<InGameEntity>, With<Text>)>>,
+    mut next_state: ResMut<NextState<GameState>>,
+    mut score: ResMut<Score>,
+) {
+    if keyboard_input.just_pressed(KeyCode::KeyR) {
+        for entity in &query {
+            commands.entity(entity).despawn();
+        }
+        score.init_score();
+        next_state.set(GameState::Playing);
+    }
+}
+
+fn game_start(
+    mut commands: Commands,
+    keyboard_input: Res<ButtonInput<KeyCode>>,
+    mut next_state: ResMut<NextState<GameState>>,
+    text_query: Query<Entity, With<Text>>,
+) {
+    if keyboard_input.pressed(KeyCode::Space) {
+        println!("Game Start!");
+        for text_entity in &text_query {
+            commands.entity(text_entity).despawn();
+        }
+        next_state.set(GameState::Playing);
+    }
 }
 
 fn move_player(
@@ -214,6 +343,7 @@ fn shoot_bullet(
                 Status::new(1, 1),
                 Bullet,
                 Velocity(Vec3::new(0.0, 800.0, 0.0)),
+                InGameEntity,
             ));
         }
     }
@@ -286,7 +416,8 @@ fn spawn_enemies(
             TeamSide::ENEMY,
             Status::new(spawn_config.hp, spawn_config.attack), // 将来的に複数の敵を作成したいので、spawn_configを参照する
             Velocity(Vec3::new(x_v, -200.0, 0.0)),
-            ShootCooldown(Timer::from_seconds(0.1, TimerMode::Repeating)),
+            ShootCooldown(Timer::from_seconds(0.4, TimerMode::Repeating)),
+            InGameEntity,
         ));
     }
 }
@@ -319,7 +450,7 @@ fn check_collisions_with_bullet(
             }
             // aabb方式の衝突判定を行う
             if check_aabb_collision(&bullet_transform.translation, bullet_collider, &target_transform.translation, target_collider) {
-                // 敵のHPを減らす(todo)
+                // 敵のHPを減らす
                 target_status.reduce_hp(bullet_status.get_attack());
 
                 commands.entity(bullet_entity).despawn();
@@ -349,6 +480,7 @@ fn check_collisions_between_target(
     mut player_query: Query<(Entity, &Transform, &mut Status, &Collider),With<Player>>,
     mut enemy_query: Query<(Entity, &Transform, &mut Status, &Collider, Option<&Bullet>), Without<Player>>,
     mut next_state: ResMut<NextState<GameState>>,
+    mut score: ResMut<Score>,
 ) {
     if let Ok((player_entity, player_transform, mut player_status, player_collider)) = player_query.single_mut() {
         for (enemy_entity, enemy_transform, mut enemy_status, enemy_collider, opt_bullet) in enemy_query.iter_mut() {
@@ -360,6 +492,7 @@ fn check_collisions_between_target(
             if check_aabb_collision(&player_transform.translation, player_collider, &enemy_transform.translation, enemy_collider) {
                 // PlayerのHPを減らす
                 player_status.reduce_hp(enemy_status.get_attack());
+                enemy_status.reduce_hp(player_status.get_attack());
 
                 commands.entity(enemy_entity).despawn();
 
@@ -370,7 +503,63 @@ fn check_collisions_between_target(
                     next_state.set(GameState::GameOver);
                     return;
                 }
+                // 敵のHPがゼロなら削除
+                if enemy_status.is_die() {
+                    commands.entity(enemy_entity).despawn();
+                    score.add_score(1);
+                }
             }
         }
+    }
+}
+
+fn enemy_shoot(
+    mut commands: Commands,
+    time:Res<Time>,
+    mut enemy_query: Query<(&Transform, &mut ShootCooldown), With<Enemy>>,
+    player_query: Query<&Transform,With<Player>>,
+) {
+    if let Ok(player_transform) = player_query.single() {
+        for (enemy_transform, mut enemy_shootcooldown) in enemy_query.iter_mut() {
+            enemy_shootcooldown.0.tick(time.delta());
+
+            if enemy_shootcooldown.0.is_finished() {
+                // 方向ベクトルの計算
+                let diff = player_transform.translation - enemy_transform.translation;
+                let direction = if diff.length_squared() > 0.0 {
+                    diff.normalize() // 正規化
+                }else {
+                    Vec3::Y // 敵の弾とplayerが重なっていたらとりあえず下へ
+                };
+
+                commands.spawn((
+                    Sprite {
+                        color: Color::srgb(0.8, 0.8, 0.8),
+                        custom_size: Some(Vec2::new(12.0, 12.0)),
+                        ..default()
+                    },
+                    Transform::from_translation(enemy_transform.translation),
+                    Bullet,
+                    TeamSide::ENEMY,
+                    Collider::CIRCLE(Circle::new(5.0)),
+                    Status::new(1, 1),
+                    Velocity(direction * 300.), // 計算したベクトルに、速度定数を加える
+                    InGameEntity,
+                ));
+            }
+        }
+    }
+}
+
+fn update_score(
+    mut score: ResMut<Score>,
+    mut query: Query<&mut TextSpan, With<ScoreText>>,
+) {
+    // Score変わってなかったら編集する必要なし
+    if !score.get_is_changed() {
+        return;
+    }
+    for mut text in query.iter_mut() {
+        **text = format!("{}", score.get_score());
     }
 }
