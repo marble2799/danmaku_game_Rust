@@ -166,7 +166,7 @@ fn start_setup(mut commands: Commands) {
         }
     ));
 
-    // (todo)操作の説明 | wasdで移動, spaceで射撃(長押しOK)
+    // 操作の説明 | wasdで移動, spaceで射撃(長押しOK)
     commands.spawn((
         Text::new("WASD: movement\nSpaceKey: shoot(can hold)"),
         TextLayout::new_with_justify(Justify::Center),
