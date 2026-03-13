@@ -1,6 +1,8 @@
 # Simple Danmaku Shooting Game
 
-## develop memo
+ゲームは[こちら](https://marble2799.github.io/danmaku_game_Rust/) から遊べます。
+
+## develop memo(diary)
 ### 2026/02/06
 Verify that it works corrently with `cargo run`. However, `trunk serve` does not work well(only black window is shown).
 -> It works with `FireFox` !! Maybe Chrome with Ubuntu denies GPU because a lot of crash reports are reported.
